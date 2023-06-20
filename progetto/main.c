@@ -4,7 +4,7 @@
 #define MAX(X,Y) (X > Y ? X : Y)
 
 // definitions for the station queue
-#define INIT_STATION_QUEUE_DIM 8192
+#define INIT_STATION_QUEUE_DIM 32
 
 enum color_t {
     WHITE = 0,
@@ -95,9 +95,14 @@ struct station_queue_t* reallocate_station_queue(struct station_queue_t* queue) 
     
     struct station_queue_t* res;
     res = create_station_queue(queue->dim << 1);
-    do {
+    
+    // if we check for emptyness we get a false positive, we need to extract
+    // an element from the queue
+    res = enqueue_station(res, queue->station_ref[queue->head]);
+    queue->head = (queue->head + 1) % queue->dim;
+
+    while(!is_empty_station_queue(queue))
         res = enqueue_station(res,dequeue_station(queue));
-    }while(!is_empty_station_queue(queue));
 
     deallocate_station_queue(queue);
 
@@ -254,6 +259,15 @@ struct vehicle_t* remove_vehicle(struct vehicle_t* vehicle, unsigned int autonom
     // If the vehicle with given autonomy is not found, do nothing
     if(vehicle == NULL) return NULL;
 
+    // If the vehicle with given autonomy has lower autonomy than current,
+    // we recursively call the function on the left child
+    if(autonomy < vehicle->autonomy) {
+        vehicle->left = remove_vehicle(vehicle->left,autonomy);
+    }
+    if(autonomy > vehicle->autonomy) {
+        vehicle->right = remove_vehicle(vehicle->right,autonomy);
+    }
+
     // If we find the vehicle we decrease its number if >1, else delete it
     if(autonomy == vehicle->autonomy) {
         
@@ -295,7 +309,7 @@ struct vehicle_t* remove_vehicle(struct vehicle_t* vehicle, unsigned int autonom
     // if the node is not balanced we have to perform same rotations as in the add_vehicle case
     if(balance < -1) {
         // Left Right case
-        if(autonomy > vehicle->left->autonomy)
+        if(get_vehicle_balance(vehicle->left) == 1)
         {
             vehicle->left = left_rotate_vehicle(vehicle->left);
         }
@@ -304,7 +318,7 @@ struct vehicle_t* remove_vehicle(struct vehicle_t* vehicle, unsigned int autonom
     }
     if(balance > 1) {
         // Right Left case
-        if(autonomy < vehicle->right->autonomy) {
+        if(get_vehicle_balance(vehicle->right) == -1) {
             vehicle->right = right_rotate_vehicle(vehicle->right);
         }
         // Now we are in Right Right case
@@ -317,16 +331,17 @@ struct vehicle_t* remove_vehicle(struct vehicle_t* vehicle, unsigned int autonom
 
 }
 
-struct vehicle_t* remove_all_vehicles(struct vehicle_t* vehicle) {
+void remove_all_vehicles(struct vehicle_t* vehicle) {
 
     if(vehicle != NULL) {
         remove_all_vehicles(vehicle->left);
         remove_all_vehicles(vehicle->right);
         
         free(vehicle);
+        vehicle = NULL;
     }
 
-    return NULL;
+    return;
 }
 
 struct vehicle_t* find_vehicle(struct vehicle_t* vehicle, unsigned int autonomy) {
@@ -482,6 +497,15 @@ struct station_t* remove_station(struct station_t* station, unsigned int distanc
     // If the station with given distance is not found, do nothing
     if(station == NULL) return NULL;
 
+    // If the station with given distance has lower distance than current,
+    // we recursively call the function on the left child
+    if(distance < station->distance) {
+        station->left = remove_station(station->left,distance);
+    }
+    if(distance > station->distance) {
+        station->right = remove_station(station->right,distance);
+    }
+
     // If we find the station we decrease its number if >1, else delete it
     if(distance == station->distance) {
         
@@ -502,6 +526,7 @@ struct station_t* remove_station(struct station_t* station, unsigned int distanc
             station->distance = tmp->distance;
             remove_all_vehicles(station->vehicle_parking);
             station->vehicle_parking = tmp->vehicle_parking;
+            tmp->vehicle_parking = NULL; // this is necessaty to avoid removing useful vehicles
             station->max_vehicle_autonomy = tmp->max_vehicle_autonomy;
             station->right = remove_station(station->right,tmp->distance);
             
@@ -519,7 +544,7 @@ struct station_t* remove_station(struct station_t* station, unsigned int distanc
     // if the node is not balanced we have to perform same rotations as in the add_station case
     if(balance < -1) {
         // Left Right case
-        if(distance > station->left->distance)
+        if(get_station_balance(station->left) == 1)
         {
             station->left = left_rotate_station(station->left);
         }
@@ -528,7 +553,7 @@ struct station_t* remove_station(struct station_t* station, unsigned int distanc
     }
     if(balance > 1) {
         // Right Left case
-        if(distance < station->right->distance) {
+        if(get_station_balance(station->right) == -1) {
             station->right = right_rotate_station(station->right);
         }
         // Now we are in Right Right case
@@ -541,7 +566,7 @@ struct station_t* remove_station(struct station_t* station, unsigned int distanc
 
 }
 
-struct station_t* remove_all_stations(struct station_t* station) {
+void remove_all_stations(struct station_t* station) {
 
     if(station != NULL) {
         remove_all_stations(station->left);
@@ -549,9 +574,10 @@ struct station_t* remove_all_stations(struct station_t* station) {
         
         remove_all_vehicles(station->vehicle_parking);
         free(station);
+        station = NULL;
     }
 
-    return NULL;
+    return;
 }
 
 struct station_t* find_station(struct station_t* station, unsigned int distance) {
@@ -584,8 +610,12 @@ void remove_vehicle_from_station(struct station_t* station, unsigned int autonom
     if(find_vehicle(station->vehicle_parking,autonomy) == NULL) {
         struct vehicle_t* tmp;
         tmp = maximum_vehicle(station->vehicle_parking);
-        if(tmp == NULL) station->max_vehicle_autonomy = 0;
-        station->max_vehicle_autonomy = tmp->autonomy;
+        if(tmp == NULL) {
+            station->max_vehicle_autonomy = 0;
+        }
+        else {
+            station->max_vehicle_autonomy = tmp->autonomy;
+        }
     }
 
     return;
@@ -641,7 +671,7 @@ void print_route_reverse(struct station_t* station,struct station_t* end_station
 // Function to enqueue stations to do a breadth-first search
 // We only include stations in one direction, till the max autonomy
 // permits to reach the station. We do this in order
-void enqueue_stations_in_order(struct station_t* station,struct station_t* prev_station,struct station_queue_t* queue,unsigned int low,unsigned int high) {
+void enqueue_stations_in_order(struct station_t* station,struct station_t* prev_station,struct station_queue_t** queue,unsigned int low,unsigned int high) {
 
     if(station == NULL) return;
 
@@ -652,45 +682,42 @@ void enqueue_stations_in_order(struct station_t* station,struct station_t* prev_
         if(station->color == WHITE) {
             station->color = GREY;
             station->prev_on_path = prev_station;
-            queue = enqueue_station(queue, station);
+            *queue = enqueue_station(*queue, station);
         }
     }
-
     if(station->distance < high)
         enqueue_stations_in_order(station->right, prev_station, queue, low, high);
 
 }
 
-void enqueue_stations_in_order_backwards(struct station_t* station,struct station_t* prev_station,struct station_queue_t* queue) {
+void enqueue_stations_in_order_backwards(struct station_t* station,struct station_t* prev_station,struct station_t* begin_station,struct station_queue_t** queue) {
 
     if(station == NULL) return;
 
     if(station->distance > prev_station->distance)
-        enqueue_stations_in_order_backwards(station->left, prev_station, queue);
+        enqueue_stations_in_order_backwards(station->left, prev_station, begin_station, queue);
 
     if(station->distance > prev_station->distance &&
-       (station->distance - station->max_vehicle_autonomy) <= prev_station->distance) {
+       (station->distance <= prev_station->distance + station->max_vehicle_autonomy)) {
         if(station->color == WHITE) {
             station->color = GREY;
             station->prev_on_path = prev_station;
-            queue = enqueue_station(queue, station);
+            *queue = enqueue_station(*queue, station);
         }
     }
 
-    enqueue_stations_in_order_backwards(station->right, prev_station, queue);
+    if(station->distance <= begin_station->distance)
+        enqueue_stations_in_order_backwards(station->right, prev_station, begin_station, queue);
 
 }
 
-// declaring queue as global variable to update it in case we need to reallocate
-struct station_queue_t* queue;
-
-void plan_route(struct station_t* station_tree,struct station_t* begin_station,struct station_t* end_station) {
+void plan_route(struct station_t* station_tree,struct station_t* begin_station,struct station_t* end_station,struct station_queue_t** queue) {
 
     //return;
     
     struct station_t* curr;
 
-    queue = create_station_queue(INIT_STATION_QUEUE_DIM);
+    *queue = create_station_queue(INIT_STATION_QUEUE_DIM);
 
     clean_tree(station_tree);
 
@@ -698,17 +725,19 @@ void plan_route(struct station_t* station_tree,struct station_t* begin_station,s
     if(begin_station->distance == end_station->distance) {
 
         printf("%d\n", begin_station->distance);
+        *queue = deallocate_station_queue(*queue);
         return;
     }
 
     if(begin_station->distance < end_station->distance) {
         begin_station->color = GREY;
-        queue = enqueue_station(queue, begin_station);
+        *queue = enqueue_station(*queue, begin_station);
 
-        while(!is_empty_station_queue(queue)) {
-            curr = dequeue_station(queue);
+        while(!is_empty_station_queue(*queue)) {
+            curr = dequeue_station(*queue);
             if(curr == end_station) {
                 print_route_reverse(curr,end_station);
+                *queue = deallocate_station_queue(*queue);
                 return;
             }
             enqueue_stations_in_order(station_tree, curr, queue, curr->distance+1, curr->distance + curr->max_vehicle_autonomy);
@@ -717,22 +746,21 @@ void plan_route(struct station_t* station_tree,struct station_t* begin_station,s
 
     if(begin_station->distance > end_station->distance) {
         end_station->color = GREY;
-        queue = enqueue_station(queue, end_station);
+        *queue = enqueue_station(*queue, end_station);
 
-        while(!is_empty_station_queue(queue)) {
-            curr = dequeue_station(queue);
+        while(!is_empty_station_queue(*queue)) {
+            curr = dequeue_station(*queue);
             if(curr == begin_station) {
                 print_route(curr,begin_station);
+                *queue = deallocate_station_queue(*queue);
                 return;
             }
-            enqueue_stations_in_order_backwards(station_tree, curr, queue);
+            enqueue_stations_in_order_backwards(station_tree, curr, begin_station, queue);
         }
     }
 
-    queue = deallocate_station_queue(queue);
-
     printf("nessun percorso\n");
-
+    *queue = deallocate_station_queue(*queue);
     return;
 
 }
@@ -745,8 +773,9 @@ int main(void) {
                  vehicle_autonomy,
                  vehicles_number;
 
-    struct station_t* stations = NULL; // Initialize empty tree for stations
+    struct station_t* stations = NULL; // Empty tree for stations
     struct station_t* station; //the station on which we do operations
+    struct station_queue_t* queue = NULL; // Pointer to queue
 
     
      // Scan every command until EOF or Ctrl-D in terminal
@@ -855,7 +884,7 @@ int main(void) {
                 begin_station = find_station(stations,station_distance);
                 end_station = find_station(stations,end_station_distance);
                 if(begin_station != NULL && end_station != NULL)
-                    plan_route(stations,begin_station,end_station);
+                    plan_route(stations,begin_station,end_station,&queue);
                 else printf("nessun percorso\n");
                 }
                 break;
@@ -864,6 +893,8 @@ int main(void) {
     }
 
     remove_all_stations(stations);
+
+    stations = NULL;
 
     return 0;
 }
