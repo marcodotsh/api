@@ -25,7 +25,7 @@ struct vehicle_t {
 struct station_t {
     unsigned int distance; //key
     unsigned int height; //used to calculate height vector to keep AVL tree balanced
-    //struct station_t* parent;
+    struct station_t* parent;
     struct station_t* left;
     struct station_t* right;
 
@@ -365,6 +365,7 @@ struct station_t* create_station_node(unsigned int distance) {
     res = malloc(sizeof(struct station_t));
     res->distance = distance;
     res->height = 1; // this will be updated later if necessary
+    res->parent = NULL;
     res->left = NULL;
     res->right = NULL;
     res->vehicle_parking = NULL;
@@ -392,12 +393,16 @@ struct station_t* left_rotate_station(struct station_t* station) {
     struct station_t* tmp;
     tmp = station->right;
     station->right = tmp->left;
+    if(station->right != NULL)
+        station->right->parent = station;
     tmp->left = station;
+    station->parent = tmp;
 
     // now we recalculate correct height of moved nodes using subtrees as invariants
     station->height = MAX(station_height(station->left),station_height(station->right)) + 1;
     tmp->height = MAX(station_height(tmp->left),station_height(tmp->right)) + 1;
 
+    // when we return this we have to update the partent
     return tmp;
 }
 
@@ -406,12 +411,16 @@ struct station_t* right_rotate_station(struct station_t* station) {
     struct station_t* tmp;
     tmp = station->left;
     station->left = tmp->right;
+    if(station->left != NULL)
+        station->left->parent = station;
     tmp->right = station;
+    station->parent = tmp;
 
     // now we recalculate correct height of moved nodes using subtrees as invariants
     station->height = MAX(station_height(station->left),station_height(station->right)) + 1;
     tmp->height = MAX(station_height(tmp->left),station_height(tmp->right)) + 1;
 
+    // when we return this we have to update the partent
     return tmp;
 }
 
@@ -428,9 +437,11 @@ struct station_t* add_station(struct station_t* station, unsigned int distance) 
     // if the key is different we try to add the station on the correct side
     if(distance < station->distance) {
         station->left = add_station(station->left,distance);
+        station->left->parent = station;
     }
-    else {
+    else if(distance > station->distance){
         station->right = add_station(station->right,distance);
+        station->right->parent = station;
     }
 
     // we have to recalculate the height of current node
@@ -448,6 +459,7 @@ struct station_t* add_station(struct station_t* station, unsigned int distance) 
         if(distance > station->left->distance)
         {
             station->left = left_rotate_station(station->left);
+            station->left->parent = station;
         }
         // Now we are in Left Left case
         return right_rotate_station(station);
@@ -456,6 +468,7 @@ struct station_t* add_station(struct station_t* station, unsigned int distance) 
         // Right Left case
         if(distance < station->right->distance) {
             station->right = right_rotate_station(station->right);
+            station->right->parent = station;
         }
         // Now we are in Right Right case
         return left_rotate_station(station);
@@ -501,12 +514,15 @@ struct station_t* remove_station(struct station_t* station, unsigned int distanc
     // we recursively call the function on the left child
     if(distance < station->distance) {
         station->left = remove_station(station->left,distance);
+        if(station->left != NULL)
+            station->left->parent = station;
     }
     if(distance > station->distance) {
         station->right = remove_station(station->right,distance);
+        if(station->right != NULL)
+            station->right->parent = station;
     }
 
-    // If we find the station we decrease its number if >1, else delete it
     if(distance == station->distance) {
         
         // we have to check if the station to remove has 2 or less children
@@ -526,9 +542,11 @@ struct station_t* remove_station(struct station_t* station, unsigned int distanc
             station->distance = tmp->distance;
             remove_all_vehicles(station->vehicle_parking);
             station->vehicle_parking = tmp->vehicle_parking;
-            tmp->vehicle_parking = NULL; // this is necessaty to avoid removing useful vehicles
+            tmp->vehicle_parking = NULL; // this is necessary to avoid removing useful vehicles
             station->max_vehicle_autonomy = tmp->max_vehicle_autonomy;
             station->right = remove_station(station->right,tmp->distance);
+            if(station->right != NULL)
+                station->right->parent = station;
             
     }
 
@@ -547,6 +565,7 @@ struct station_t* remove_station(struct station_t* station, unsigned int distanc
         if(get_station_balance(station->left) == 1)
         {
             station->left = left_rotate_station(station->left);
+            station->left->parent = station;
         }
         // Now we are in Left Left case
         return right_rotate_station(station);
@@ -555,6 +574,7 @@ struct station_t* remove_station(struct station_t* station, unsigned int distanc
         // Right Left case
         if(get_station_balance(station->right) == -1) {
             station->right = right_rotate_station(station->right);
+            station->right->parent = station;
         }
         // Now we are in Right Right case
         return left_rotate_station(station);
