@@ -37,7 +37,10 @@ struct station_t {
     
     struct vehicle_t* vehicle_parking; //this is the root of an AVL tree for vehicles
     unsigned int max_vehicle_autonomy;
+
     enum color_t color; //used for breadth-first search
+    struct station_t* next; //used for breadth-first search
+    struct station_t* prev; //used for breadth-first search
     struct station_t* prev_on_path; //used to print the final path
 };
 
@@ -358,6 +361,81 @@ struct vehicle_t* find_vehicle(struct vehicle_t* vehicle, unsigned int autonomy)
 
 }
 
+// the minimum is the node in bottom left of the tree
+struct station_t* minimum_station(struct station_t* station) {
+
+    if(station == NULL) return NULL;
+
+    while(station->left != NULL) {
+        station = station->left;
+    }
+
+    return station;
+
+}
+
+// the maximum is the node in bottom right of the tree
+struct station_t* maximum_station(struct station_t* station) {
+
+    if(station == NULL) return NULL;
+
+    while(station->right != NULL) {
+        station = station->right;
+    }
+
+    return station;
+
+}
+
+struct station_t* predecessor_station(struct station_t* station) {
+
+    if (station->left != NULL)
+        return maximum_station(station->left);
+    
+    while(station->parent != NULL && station->parent->left == station) {
+        station = station->parent;
+    }
+
+    return station->parent;
+
+}
+
+struct station_t* successor_station(struct station_t* station) {
+
+    if (station->right != NULL)
+        return minimum_station(station->right);
+    
+    while(station->parent != NULL && station->parent->right == station) {
+        station = station->parent;
+    }
+
+    return station->parent;
+
+}
+
+struct station_t* station_greater_or_equal_to_distance(struct station_t* station_tree, unsigned int distance) {
+    if (station_tree == NULL) return NULL;
+
+    struct station_t* tmp,
+                    * res;
+    res = NULL;
+    tmp = station_tree;
+
+    while (tmp != NULL) {
+        if (tmp->distance == distance)
+            return tmp;
+        if (tmp->distance > distance) {
+            res = tmp;
+            tmp = tmp->left;        
+        }
+        else if (tmp->distance < distance) {
+            tmp = tmp->right;
+        }
+    }
+
+    return res;
+}
+
 // Create a new node with given distance
 struct station_t* create_station_node(unsigned int distance) {
     struct station_t* res;
@@ -371,6 +449,8 @@ struct station_t* create_station_node(unsigned int distance) {
     res->vehicle_parking = NULL;
     res->max_vehicle_autonomy = 0;
     res->color = WHITE;
+    res->next = NULL;
+    res->prev = NULL;
     res->prev_on_path = NULL;
 
     return res;
@@ -425,10 +505,14 @@ struct station_t* right_rotate_station(struct station_t* station) {
 }
 
 // Add station with given distance to specified tree.
-struct station_t* add_station(struct station_t* station, unsigned int distance) {
+struct station_t* add_station(struct station_t* station, unsigned int distance, struct station_t** station_ref) {
     // if we reach the bottom of the tree without finding
     // a node with the key we add the new node here
-    if(station == NULL) return (create_station_node(distance));
+    if(station == NULL) {
+
+        *station_ref = (create_station_node(distance));
+        return *station_ref;
+    }
 
     // if we find the key we have to return NULL: only a station with given distance
     //if(distance == station->distance) return NULL;
@@ -436,11 +520,11 @@ struct station_t* add_station(struct station_t* station, unsigned int distance) 
 
     // if the key is different we try to add the station on the correct side
     if(distance < station->distance) {
-        station->left = add_station(station->left,distance);
+        station->left = add_station(station->left,distance,station_ref);
         station->left->parent = station;
     }
     else if(distance > station->distance){
-        station->right = add_station(station->right,distance);
+        station->right = add_station(station->right,distance,station_ref);
         station->right->parent = station;
     }
 
@@ -479,33 +563,7 @@ struct station_t* add_station(struct station_t* station, unsigned int distance) 
     return station;
 }
 
-// the minimum is the node in bottom left of the tree
-struct station_t* minimum_station(struct station_t* station) {
-
-    if(station == NULL) return NULL;
-
-    while(station->left != NULL) {
-        station = station->left;
-    }
-
-    return station;
-
-}
-
-// the maximum is the node in bottom right of the tree
-struct station_t* maximum_station(struct station_t* station) {
-
-    if(station == NULL) return NULL;
-
-    while(station->right != NULL) {
-        station = station->right;
-    }
-
-    return station;
-
-}
-
-struct station_t* remove_station(struct station_t* station, unsigned int distance) {
+struct station_t* remove_station(struct station_t* station, unsigned int distance, char* flag) {
 
     // If the station with given distance is not found, do nothing
     if(station == NULL) return NULL;
@@ -513,17 +571,25 @@ struct station_t* remove_station(struct station_t* station, unsigned int distanc
     // If the station with given distance has lower distance than current,
     // we recursively call the function on the left child
     if(distance < station->distance) {
-        station->left = remove_station(station->left,distance);
+        station->left = remove_station(station->left,distance,flag);
         if(station->left != NULL)
             station->left->parent = station;
     }
     if(distance > station->distance) {
-        station->right = remove_station(station->right,distance);
+        station->right = remove_station(station->right,distance,flag);
         if(station->right != NULL)
             station->right->parent = station;
     }
 
     if(distance == station->distance) {
+
+        *flag = 1;
+
+        // fixing next prev hole
+        if (station->prev != NULL)
+            station->prev->next = station->next;
+        if (station->next != NULL)
+            station->next->prev = station->prev;
         
         // we have to check if the station to remove has 2 or less children
         struct station_t* tmp;
@@ -538,15 +604,23 @@ struct station_t* remove_station(struct station_t* station, unsigned int distanc
 
         // if the station has two children we update its content with the one of its 
         // successor
-            tmp = minimum_station(station->right);
-            station->distance = tmp->distance;
-            remove_all_vehicles(station->vehicle_parking);
-            station->vehicle_parking = tmp->vehicle_parking;
-            tmp->vehicle_parking = NULL; // this is necessary to avoid removing useful vehicles
-            station->max_vehicle_autonomy = tmp->max_vehicle_autonomy;
-            station->right = remove_station(station->right,tmp->distance);
-            if(station->right != NULL)
-                station->right->parent = station;
+        tmp = minimum_station(station->right);
+        station->distance = tmp->distance;
+        remove_all_vehicles(station->vehicle_parking);
+        station->vehicle_parking = tmp->vehicle_parking;
+        tmp->vehicle_parking = NULL; // this is necessary to avoid removing useful vehicles
+        station->max_vehicle_autonomy = tmp->max_vehicle_autonomy;
+        station->next = tmp->next;
+        if (station->next != NULL)
+            station->next->prev = station;
+        tmp->next = NULL;
+        station->prev = tmp->prev;
+        if (station->prev != NULL)
+            station->prev->next = station;
+        tmp->prev = NULL;
+        station->right = remove_station(station->right,tmp->distance,flag);
+        if(station->right != NULL)
+            station->right->parent = station;
             
     }
 
@@ -688,28 +762,6 @@ void print_route_reverse(struct station_t* station,struct station_t* end_station
     return;
 }
 
-// Function to enqueue stations to do a breadth-first search
-// We only include stations in one direction, till the max autonomy
-// permits to reach the station. We do this in order
-void enqueue_stations_in_order(struct station_t* station,struct station_t* prev_station,struct station_queue_t** queue,unsigned int low,unsigned int high) {
-
-    if(station == NULL) return;
-
-    if(station->distance > low)
-        enqueue_stations_in_order(station->left, prev_station, queue, low, high);
-
-    if(station->distance >= low && station->distance <= high) {
-        if(station->color == WHITE) {
-            station->color = GREY;
-            station->prev_on_path = prev_station;
-            *queue = enqueue_station(*queue, station);
-        }
-    }
-    if(station->distance < high)
-        enqueue_stations_in_order(station->right, prev_station, queue, low, high);
-
-}
-
 void enqueue_stations_in_order_backwards(struct station_t* station,struct station_t* prev_station,struct station_t* begin_station,struct station_queue_t** queue) {
 
     if(station == NULL) return;
@@ -735,7 +787,8 @@ void plan_route(struct station_t* station_tree,struct station_t* begin_station,s
 
     //return;
     
-    struct station_t* curr;
+    struct station_t* curr,
+                    * tmp;
 
     *queue = create_station_queue(INIT_STATION_QUEUE_DIM);
 
@@ -755,27 +808,45 @@ void plan_route(struct station_t* station_tree,struct station_t* begin_station,s
 
         while(!is_empty_station_queue(*queue)) {
             curr = dequeue_station(*queue);
-            if(curr == end_station) {
-                print_route_reverse(curr,end_station);
-                *queue = deallocate_station_queue(*queue);
-                return;
+            tmp = curr->next;
+            while(tmp != NULL && tmp->distance <= curr->distance + curr->max_vehicle_autonomy) {
+                if(tmp == end_station) {
+                    tmp->prev_on_path = curr;
+                    print_route_reverse(tmp,end_station);
+                    *queue = deallocate_station_queue(*queue);
+                    return;
+                }
+                if(tmp->color == WHITE) {
+                    tmp->color = GREY;
+                    tmp->prev_on_path = curr;
+                    *queue = enqueue_station(*queue, tmp);
+                }
+                tmp = tmp->next;
             }
-            enqueue_stations_in_order(station_tree, curr, queue, curr->distance+1, curr->distance + curr->max_vehicle_autonomy);
         }
     }
 
     if(begin_station->distance > end_station->distance) {
-        end_station->color = GREY;
-        *queue = enqueue_station(*queue, end_station);
+        begin_station->color = GREY;
+        *queue = enqueue_station(*queue, begin_station);
 
         while(!is_empty_station_queue(*queue)) {
             curr = dequeue_station(*queue);
-            if(curr == begin_station) {
-                print_route(curr,begin_station);
-                *queue = deallocate_station_queue(*queue);
-                return;
+            tmp = station_greater_or_equal_to_distance(station_tree, (unsigned int)((long int)curr->distance - (long int)curr->max_vehicle_autonomy));
+            while(tmp != NULL && tmp != curr ) {
+                if(tmp == end_station) {
+                    tmp->prev_on_path = curr;
+                    print_route_reverse(tmp,end_station);
+                    *queue = deallocate_station_queue(*queue);
+                    return;
+                }
+                if(tmp->color == WHITE) {
+                    tmp->color = GREY;
+                    tmp->prev_on_path = curr;
+                    *queue = enqueue_station(*queue, tmp);
+                }
+                tmp = tmp->next;
             }
-            enqueue_stations_in_order_backwards(station_tree, curr, begin_station, queue);
         }
     }
 
@@ -787,7 +858,7 @@ void plan_route(struct station_t* station_tree,struct station_t* begin_station,s
 
 int main(void) {
 
-    char command[19];
+    char command[19], flag;
     unsigned int station_distance,
                  end_station_distance,
                  vehicle_autonomy,
@@ -813,19 +884,29 @@ int main(void) {
         switch(command[12]) {
             // aggiungi-stazione
             case 'z':
-                
-                // We check that the station does not already exists
-                station = find_station(stations,station_distance);
-                if(station==NULL) {
-                    // Try to add station with given distance.
-                    // If all goes well find_station() returns pointer to station
-                    // so we can add cars or do nothing if it returns NULL
-                    stations = add_station(stations, station_distance);
-                    station = find_station(stations,station_distance);
-                
-                /* vehicles are at most 512, so we can use 16 bit numbers
-                 * to read how many cars there are
-                 */
+                // We check that the station does not already exist
+                station = NULL;
+                stations = add_station(stations, station_distance,&station);
+                stations->parent = NULL;
+                if(station!=NULL) {
+
+                    // fix next prev pointers
+                    struct station_t* tmp;
+                    tmp = predecessor_station(station);
+                    if(tmp != NULL) {
+                        station->prev = tmp;
+                        station->next = tmp->next;
+                        tmp->next = station;
+                        if (station->next != NULL)
+                            station->next->prev = station;
+                    }
+                    else {
+                        tmp = successor_station(station);
+                        station->next = tmp;
+                        if (tmp != NULL)
+                            tmp->prev = station;
+                    }
+
                     if(scanf("%d", &vehicles_number) == 1) {
                         for(int i=0;i<vehicles_number;i++) {
                             if(scanf("%d", &vehicle_autonomy) == 1) {
@@ -851,9 +932,12 @@ int main(void) {
                 // Try to remove station with given distance.
                 // If all goes well find_station() returns pointer to station,
                 // else returns NULL
-                station = find_station(stations,station_distance);
-                if(station != NULL) {
-                    stations = remove_station(stations, station->distance);
+                flag = 0;
+                stations = remove_station(stations, station_distance, &flag);
+                if (stations != NULL)
+                    stations->parent = NULL;
+                if(flag == 1) {
+                    
                     printf("demolita\n");
                 }
                 else {
