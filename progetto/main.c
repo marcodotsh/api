@@ -762,27 +762,6 @@ void print_route_reverse(struct station_t* station,struct station_t* end_station
     return;
 }
 
-void enqueue_stations_in_order_backwards(struct station_t* station,struct station_t* prev_station,struct station_t* begin_station,struct station_queue_t** queue) {
-
-    if(station == NULL) return;
-
-    if(station->distance > prev_station->distance)
-        enqueue_stations_in_order_backwards(station->left, prev_station, begin_station, queue);
-
-    if(station->distance > prev_station->distance &&
-       (station->distance <= prev_station->distance + station->max_vehicle_autonomy)) {
-        if(station->color == WHITE) {
-            station->color = GREY;
-            station->prev_on_path = prev_station;
-            *queue = enqueue_station(*queue, station);
-        }
-    }
-
-    if(station->distance <= begin_station->distance)
-        enqueue_stations_in_order_backwards(station->right, prev_station, begin_station, queue);
-
-}
-
 void plan_route(struct station_t* station_tree,struct station_t* begin_station,struct station_t* end_station,struct station_queue_t** queue) {
 
     //return;
@@ -827,16 +806,20 @@ void plan_route(struct station_t* station_tree,struct station_t* begin_station,s
     }
 
     if(begin_station->distance > end_station->distance) {
-        begin_station->color = GREY;
-        *queue = enqueue_station(*queue, begin_station);
+        end_station->color = GREY;
+        *queue = enqueue_station(*queue, end_station);
 
         while(!is_empty_station_queue(*queue)) {
             curr = dequeue_station(*queue);
-            tmp = station_greater_or_equal_to_distance(station_tree, (unsigned int)((long int)curr->distance - (long int)curr->max_vehicle_autonomy));
-            while(tmp != NULL && tmp != curr ) {
-                if(tmp == end_station) {
+            tmp = curr->next;
+            while(tmp != NULL && tmp != begin_station->next ) {
+                if(curr->distance + tmp->max_vehicle_autonomy < tmp->distance) {
+                    tmp = tmp->next;
+                    continue;
+                }
+                if(tmp == begin_station) {
                     tmp->prev_on_path = curr;
-                    print_route_reverse(tmp,end_station);
+                    print_route(tmp,begin_station);
                     *queue = deallocate_station_queue(*queue);
                     return;
                 }
