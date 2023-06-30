@@ -37,6 +37,8 @@ struct station_t {
     
     struct vehicle_t* vehicle_parking; //this is the root of an AVL tree for vehicles
     unsigned int max_vehicle_autonomy;
+    unsigned int leftmost_reachable_station;
+    unsigned int rightmost_reachable_station;
 
     enum color_t color; //used for breadth-first search
     struct station_t* next; //used for breadth-first search
@@ -436,6 +438,17 @@ struct station_t* station_greater_or_equal_to_distance(struct station_t* station
     return res;
 }
 
+void update_reachable_stations(struct station_t* station) {
+    
+    station->rightmost_reachable_station = station->distance + station->max_vehicle_autonomy;
+    if(station->max_vehicle_autonomy > station->distance)
+        station->leftmost_reachable_station = 0;
+    else
+        station->leftmost_reachable_station = station->distance - station->max_vehicle_autonomy;
+
+    return;
+}
+
 // Create a new node with given distance
 struct station_t* create_station_node(unsigned int distance) {
     struct station_t* res;
@@ -448,6 +461,7 @@ struct station_t* create_station_node(unsigned int distance) {
     res->right = NULL;
     res->vehicle_parking = NULL;
     res->max_vehicle_autonomy = 0;
+    update_reachable_stations(res);
     res->color = WHITE;
     res->next = NULL;
     res->prev = NULL;
@@ -610,6 +624,8 @@ struct station_t* remove_station(struct station_t* station, unsigned int distanc
         station->vehicle_parking = tmp->vehicle_parking;
         tmp->vehicle_parking = NULL; // this is necessary to avoid removing useful vehicles
         station->max_vehicle_autonomy = tmp->max_vehicle_autonomy;
+        station->rightmost_reachable_station = tmp->rightmost_reachable_station;
+        station->leftmost_reachable_station = tmp->leftmost_reachable_station;
         station->next = tmp->next;
         if (station->next != NULL)
             station->next->prev = station;
@@ -693,6 +709,7 @@ void add_vehicle_to_station(struct station_t* station, unsigned int autonomy) {
     station->vehicle_parking = add_vehicle(station->vehicle_parking, autonomy);
     if(autonomy > station->max_vehicle_autonomy) {
         station->max_vehicle_autonomy = autonomy;
+        update_reachable_stations(station);
     }
 
     return;
@@ -706,9 +723,11 @@ void remove_vehicle_from_station(struct station_t* station, unsigned int autonom
         tmp = maximum_vehicle(station->vehicle_parking);
         if(tmp == NULL) {
             station->max_vehicle_autonomy = 0;
+            update_reachable_stations(station);
         }
         else {
             station->max_vehicle_autonomy = tmp->autonomy;
+            update_reachable_stations(station);
         }
     }
 
@@ -784,22 +803,24 @@ void plan_route(struct station_t* station_tree,struct station_t* begin_station,s
     if(begin_station->distance < end_station->distance) {
         begin_station->color = GREY;
         *queue = enqueue_station(*queue, begin_station);
-
+        tmp = begin_station->next;
         while(!is_empty_station_queue(*queue)) {
             curr = dequeue_station(*queue);
-            tmp = curr->next;
-            while(tmp != NULL && tmp->distance <= curr->distance + curr->max_vehicle_autonomy) {
+            
+            while(tmp != NULL && tmp->distance <= curr->rightmost_reachable_station) {
                 if(tmp == end_station) {
                     tmp->prev_on_path = curr;
                     print_route_reverse(tmp,end_station);
                     *queue = deallocate_station_queue(*queue);
                     return;
                 }
-                if(tmp->color == WHITE) {
-                    tmp->color = GREY;
+                // We do not need to keep track of visited nodes because
+                // of how the graph is structured when going forward
+                //if(tmp->color == WHITE) {
+                    //tmp->color = GREY;
                     tmp->prev_on_path = curr;
                     *queue = enqueue_station(*queue, tmp);
-                }
+                //}
                 tmp = tmp->next;
             }
         }
@@ -812,8 +833,8 @@ void plan_route(struct station_t* station_tree,struct station_t* begin_station,s
         while(!is_empty_station_queue(*queue)) {
             curr = dequeue_station(*queue);
             tmp = curr->next;
-            while(tmp != NULL && tmp != begin_station->next ) {
-                if(curr->distance + tmp->max_vehicle_autonomy < tmp->distance) {
+            while(tmp != begin_station->next ) {
+                if(curr->distance < tmp->leftmost_reachable_station) {
                     tmp = tmp->next;
                     continue;
                 }
