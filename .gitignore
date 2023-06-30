@@ -2,4 +2,5 @@ progetto/input.txt
 progetto/output.txt
 progetto/main
 sorting/test
+callgrind.*
 
