@@ -40,14 +40,23 @@ struct station_t {
     unsigned int leftmost_reachable_station;
     unsigned int rightmost_reachable_station;
 
-    enum color_t color; //used for breadth-first search
     struct station_t* next; //used for breadth-first search
     struct station_t* prev; //used for breadth-first search
-    struct station_t* prev_on_path; //used to print the final path
+};
+
+// Used for BFS
+struct station_graph_node_t {
+    unsigned int distance; //key
+    unsigned int leftmost_reachable_station;
+    unsigned int rightmost_reachable_station;
+
+    enum color_t color; //used for breadth-first search
+
+    int prev_on_path; //used to print the final path
 };
 
 struct station_queue_t {
-    struct station_t** station_ref;
+    int* station_ref;
     unsigned int head;
     unsigned int tail;
     unsigned int dim;
@@ -58,7 +67,7 @@ struct station_queue_t* create_station_queue(unsigned int dim) {
 
     struct station_queue_t* res;
     res = malloc(sizeof(struct station_queue_t));
-    res->station_ref = malloc(sizeof(struct station_t*) * dim);
+    res->station_ref = malloc(sizeof(int) * dim);
     res->head = 0;
     res->tail = 0;
     res->dim = dim;
@@ -73,11 +82,11 @@ char is_empty_station_queue(struct station_queue_t* queue) {
     return 0;
 }
 
-struct station_t* dequeue_station(struct station_queue_t* queue) {
+int dequeue_station(struct station_queue_t* queue) {
 
-    if(is_empty_station_queue(queue)) return NULL;
+    if(is_empty_station_queue(queue)) return -1;
 
-    struct station_t* res;
+    int res;
     res = queue->station_ref[queue->head];
     queue->head = (queue->head + 1) % queue->dim;
 
@@ -94,7 +103,7 @@ struct station_queue_t* deallocate_station_queue(struct station_queue_t* queue) 
     return NULL;
 }
 
-struct station_queue_t* enqueue_station(struct station_queue_t* queue,struct station_t* station);
+struct station_queue_t* enqueue_station(struct station_queue_t* queue, int station);
 
 struct station_queue_t* reallocate_station_queue(struct station_queue_t* queue) {
     
@@ -114,7 +123,7 @@ struct station_queue_t* reallocate_station_queue(struct station_queue_t* queue) 
     return res;
 }
 
-struct station_queue_t* enqueue_station(struct station_queue_t* queue,struct station_t* station) {
+struct station_queue_t* enqueue_station(struct station_queue_t* queue, int station) {
 
     queue->station_ref[queue->tail] = station;
     queue->tail = (queue->tail + 1) % queue->dim;
@@ -462,10 +471,8 @@ struct station_t* create_station_node(unsigned int distance) {
     res->vehicle_parking = NULL;
     res->max_vehicle_autonomy = 0;
     update_reachable_stations(res);
-    res->color = WHITE;
     res->next = NULL;
     res->prev = NULL;
-    res->prev_on_path = NULL;
 
     return res;
 }
@@ -734,63 +741,101 @@ void remove_vehicle_from_station(struct station_t* station, unsigned int autonom
     return;
 }
 
-//this makes all nodes white again
+/* //this makes all nodes white again
 void clean_tree(struct station_t* station) {
     if(station == NULL) return;
 
-    station->color = WHITE;
-    station->prev_on_path = NULL;
     clean_tree(station->left);
     clean_tree(station->right);
 
     return;
 }
-
+ */
 
 // We can use the stack to print the correct order of stations
-void print_route(struct station_t* station,struct station_t* end_station) {
+void print_route(struct station_graph_node_t* vect, unsigned int station,unsigned int end_station) {
 
-    if(station->prev_on_path == NULL) {
-        printf("%d\n", station->distance);
+    if(vect[station].prev_on_path == -1) {
+        printf("%d\n", vect[station].distance);
         return;
     }
 
-    printf("%d ", station->distance);
+    printf("%d ", vect[station].distance);
 
-    print_route(station->prev_on_path,end_station);
+    print_route(vect,vect[station].prev_on_path,end_station);
     
     return;
 }
 
 // We can use the stack to print the correct order of stations
-void print_route_reverse(struct station_t* station,struct station_t* end_station) {
+void print_route_reverse(struct station_graph_node_t* vect, unsigned int station, unsigned int end_station) {
 
-    if(station->prev_on_path == NULL) {
-        printf("%d ", station->distance);
+    if(vect[station].prev_on_path == -1) {
+        printf("%d ", vect[station].distance);
         return;
     }
 
-    print_route_reverse(station->prev_on_path,end_station);
+    print_route_reverse(vect,vect[station].prev_on_path,end_station);
 
     if(station==end_station) {
-        printf("%d\n", station->distance);
+        printf("%d\n", vect[station].distance);
         return;
     }
 
-    printf("%d ", station->distance);
+    printf("%d ", vect[station].distance);
     return;
+}
+
+unsigned int number_of_stations_between(struct station_t* begin, struct station_t* end) {
+
+    unsigned int res = 1;
+
+    struct station_t* curr;
+
+    curr = begin;
+
+    while(curr != end) {
+        res++;
+        curr = curr->next;
+    }
+
+    return res;
+
+}
+
+void vector_of_stations_between(struct station_graph_node_t* vect, struct station_t* begin, struct station_t* end) {
+
+    unsigned int idx = 0;
+
+    struct station_t* curr;
+
+    curr = begin;
+
+    while(curr != end->next) {
+        vect[idx].distance = curr->distance;
+        vect[idx].color = WHITE;
+        vect[idx].rightmost_reachable_station = curr->rightmost_reachable_station;
+        vect[idx].leftmost_reachable_station = curr->leftmost_reachable_station;
+        vect[idx].prev_on_path = -1;
+
+        idx++;
+        curr = curr->next;
+    }
+
+    return;
+
 }
 
 void plan_route(struct station_t* station_tree,struct station_t* begin_station,struct station_t* end_station,struct station_queue_t** queue) {
 
-    //return;
-    
-    struct station_t* curr,
-                    * tmp;
+    unsigned int num_stations; // number of stations between begin and end station
+
+    unsigned int curr,
+                 tmp;
 
     *queue = create_station_queue(INIT_STATION_QUEUE_DIM);
 
-    clean_tree(station_tree);
+    // clean_tree(station_tree);
 
     // if the start and end stations are the same print the distance and return
     if(begin_station->distance == end_station->distance) {
@@ -801,16 +846,24 @@ void plan_route(struct station_t* station_tree,struct station_t* begin_station,s
     }
 
     if(begin_station->distance < end_station->distance) {
-        begin_station->color = GREY;
-        *queue = enqueue_station(*queue, begin_station);
-        tmp = begin_station->next;
+
+        num_stations = number_of_stations_between(begin_station,end_station);
+        struct station_graph_node_t station_vector[num_stations];
+        vector_of_stations_between(station_vector,begin_station,end_station);
+
+        //vect_begin_station = &station_vector[0];
+        //vect_end_station = &station_vector[num_stations-1];
+
+        station_vector[0].color = GREY;
+        *queue = enqueue_station(*queue, 0);
+        tmp = 1;
         while(!is_empty_station_queue(*queue)) {
             curr = dequeue_station(*queue);
             
-            while(tmp != NULL && tmp->distance <= curr->rightmost_reachable_station) {
-                if(tmp == end_station) {
-                    tmp->prev_on_path = curr;
-                    print_route_reverse(tmp,end_station);
+            while(tmp < num_stations && station_vector[tmp].distance <= station_vector[curr].rightmost_reachable_station) {
+                if(tmp == num_stations - 1) {
+                    station_vector[tmp].prev_on_path = curr;
+                    print_route_reverse(station_vector,tmp,num_stations - 1);
                     *queue = deallocate_station_queue(*queue);
                     return;
                 }
@@ -818,38 +871,46 @@ void plan_route(struct station_t* station_tree,struct station_t* begin_station,s
                 // of how the graph is structured when going forward
                 //if(tmp->color == WHITE) {
                     //tmp->color = GREY;
-                    tmp->prev_on_path = curr;
+                    station_vector[tmp].prev_on_path = curr;
                     *queue = enqueue_station(*queue, tmp);
                 //}
-                tmp = tmp->next;
+                tmp = tmp + 1;
             }
         }
     }
 
     if(begin_station->distance > end_station->distance) {
-        end_station->color = GREY;
-        *queue = enqueue_station(*queue, end_station);
+
+        num_stations = number_of_stations_between(end_station,begin_station);
+        struct station_graph_node_t station_vector[num_stations];
+        vector_of_stations_between(station_vector,end_station,begin_station);
+        
+        //vect_begin_station = &station_vector[num_stations-1];
+        //vect_end_station = &station_vector[0];
+
+        station_vector[0].color = GREY;
+        *queue = enqueue_station(*queue, 0);
 
         while(!is_empty_station_queue(*queue)) {
             curr = dequeue_station(*queue);
-            tmp = curr->next;
-            while(tmp != begin_station->next ) {
-                if(curr->distance < tmp->leftmost_reachable_station) {
-                    tmp = tmp->next;
+            tmp = curr + 1;
+            while(tmp != num_stations ) {
+                if(station_vector[curr].distance < station_vector[tmp].leftmost_reachable_station) {
+                    tmp = tmp + 1;
                     continue;
                 }
-                if(tmp == begin_station) {
-                    tmp->prev_on_path = curr;
-                    print_route(tmp,begin_station);
+                if(tmp == num_stations - 1) {
+                    station_vector[tmp].prev_on_path = curr;
+                    print_route(station_vector,tmp,num_stations - 1);
                     *queue = deallocate_station_queue(*queue);
                     return;
                 }
-                if(tmp->color == WHITE) {
-                    tmp->color = GREY;
-                    tmp->prev_on_path = curr;
+                if(station_vector[tmp].color == WHITE) {
+                    station_vector[tmp].color = GREY;
+                    station_vector[tmp].prev_on_path = curr;
                     *queue = enqueue_station(*queue, tmp);
                 }
-                tmp = tmp->next;
+                tmp = tmp + 1;
             }
         }
     }
