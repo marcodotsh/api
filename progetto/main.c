@@ -1,42 +1,90 @@
 #include <stdio.h>
 #include <stdlib.h>
 
+// helper definition to select maximum between two variables
 #define MAX(X,Y) (X > Y ? X : Y)
 
 // definitions for the station queue
+// initial queue dimension, this will increase at powers of 2
 #define INIT_STATION_QUEUE_DIM 32
 
+// declaration of colors for Breadth-First Search
 enum color_t {
     WHITE = 0,
     GREY = 1,
 };
 
-// A vehicle is an AVL tree node
+/*
+A vehicle is an AVL tree node, to manage multiple cars with
+the same autonomy we use a counter that keeps track of how
+many cars with given autonomy are in a specific vehicle tree.
+I choose this structure because is a BST, so insertion,
+deletion, research, min, max, predecessor and successor
+are all O(h), with h the height of the tree. In this case of
+AVL tree we have that are all O(log(n)).
+The operations of our interest for vehicles are:
+- aggiungi-stazione e aggiungi-auto: insertion O(log(n))
+  we also need to check if the vehicle we added has an autonomy
+  greater than the maximum autonomy currently in station O(1),
+  and update leftmost and rightmost reachable stations O(1);
+- demolisci-stazione: deletion of all nodes O(n);
+- rottama-auto: deletion O(log(n)) and we need to check
+  if the vehicle we deleted had the max autonomy, so we check
+  if it is still present with a research O(log(n)). This can be
+  further improved with a flag set to 0 if we do not remove any
+  vehicle, to 1 if we remove the only vehicle with given autonomy and
+  2 if we remove a vehicle with num >= 2 O(1);
+ */
 struct vehicle_t {
+    // key
     unsigned int autonomy;
-    unsigned short int num; //number of vehicle with this autonomy
+    // number of vehicle with same autonomy
+    unsigned short int num;
+    // height of node, used to calculate balance vector
     unsigned short int height;
 
+    // pointers to left and right children
     struct vehicle_t* left;
     struct vehicle_t* right;
 };
 
-// A station is an AVL tree node
+/*
+A station is an AVL tree node.
+I choose this structure because is a BST, so insertion,
+deletion, research, min, max, predecessor and successor
+are all O(h), with h the height of the tree. In this case of
+AVL tree we have that are all O(log(n)).
+The operations of our interest for vehicles are:
+- aggiungi-stazione: insertion O(log(n));
+- demolisci-stazione: deletion O(log(n));
+- pianifica-percorso: we search for begin and end stations
+  O(log(n)), then we create an array with all stations between
+  the two with distance O(n), leftmost and rightmost reachable
+  stations, color, prev_on_path. These are all the information
+  we need to do a Breadth First Search O(v) forward and
+  O(v^2) backward. This asimmetry is given by the fact that
+  going forward we enqueue stations sequentially, while
+  backwards for every station we have to check every station
+  on the right.
+ */
 struct station_t {
-    unsigned int distance; //key
-    unsigned int height; //used to calculate height vector to keep AVL tree balanced
+    // key
+    unsigned int distance;
+    // height of node, used to calculate balance vector
+    unsigned int height;
+    // pointers to parent, left and right child
     struct station_t* parent;
     struct station_t* left;
     struct station_t* right;
-
-    // We do not need a graph, because we can just do a breadth first research
-    // enqueueing in a queue all nodes until
-    // |exploredstation->distance - currentstation->distance| <= max_autonomy_vehicle->autonomy
-    // we have to enqueue only nodes in one direction depending on the requested path:
-    // if from 10 to 20, only more distant stations, if from 20 to 10 only nearest stations
     
-    struct vehicle_t* vehicle_parking; //this is the root of an AVL tree for vehicles
+    // this is the root of an AVL tree for vehicles
+    struct vehicle_t* vehicle_parking;
+    // max vehicle autonomy among vehicles in vehicle_parking
     unsigned int max_vehicle_autonomy;
+    /*
+      theoretical reachable stations on the left and right,
+      based on distance and max_vehicle_autonomy
+     */
     unsigned int leftmost_reachable_station;
     unsigned int rightmost_reachable_station;
 
@@ -46,7 +94,8 @@ struct station_t {
 
 // Used for BFS
 struct station_graph_node_t {
-    unsigned int distance; //key
+    // these fields are copied from the stations
+    unsigned int distance;
     unsigned int leftmost_reachable_station;
     unsigned int rightmost_reachable_station;
 
@@ -55,6 +104,7 @@ struct station_graph_node_t {
     int prev_on_path; //used to print the final path
 };
 
+// Queue used for BFS
 struct station_queue_t {
     int* station_ref;
     unsigned int head;
@@ -65,6 +115,7 @@ struct station_queue_t {
 // we initialize with queue = create_station_queue(INIT_STATION_QUEUE_DIM)
 struct station_queue_t* create_station_queue(unsigned int dim) {
 
+    // Allocation and initialization of queue
     struct station_queue_t* res;
     res = malloc(sizeof(struct station_queue_t));
     res->station_ref = malloc(sizeof(int) * dim);
@@ -75,6 +126,7 @@ struct station_queue_t* create_station_queue(unsigned int dim) {
     return res;
 }
 
+// if head and tail are in same position, the queue is empty
 char is_empty_station_queue(struct station_queue_t* queue) {
 
     if(queue->head == queue->tail) return 1;
@@ -84,8 +136,10 @@ char is_empty_station_queue(struct station_queue_t* queue) {
 
 int dequeue_station(struct station_queue_t* queue) {
 
+    // if the queue is empty we return a not valid value
     if(is_empty_station_queue(queue)) return -1;
 
+    // return head element and update queue head
     int res;
     res = queue->station_ref[queue->head];
     queue->head = (queue->head + 1) % queue->dim;
@@ -115,6 +169,7 @@ struct station_queue_t* reallocate_station_queue(struct station_queue_t* queue) 
     res = enqueue_station(res, queue->station_ref[queue->head]);
     queue->head = (queue->head + 1) % queue->dim;
 
+    // we move all elements to reallocated queue
     while(!is_empty_station_queue(queue))
         res = enqueue_station(res,dequeue_station(queue));
 
@@ -128,6 +183,7 @@ struct station_queue_t* enqueue_station(struct station_queue_t* queue, int stati
     queue->station_ref[queue->tail] = station;
     queue->tail = (queue->tail + 1) % queue->dim;
     
+    // if tail reached head, the array is full and we need to reallocate
     if(queue->tail == queue->head) {
         queue = reallocate_station_queue(queue);
     }
@@ -149,14 +205,15 @@ struct vehicle_t* create_vehicle_node(unsigned int autonomy) {
     return res;
 }
 
+// helper function to get height of node in tree
 unsigned int vehicle_height(struct vehicle_t* vehicle) {
-    // if one of the children is NULL, return the height of the other + 1
     if(vehicle == NULL) {
         return 0;
     }
     return vehicle->height;
 }
 
+// function to get balance vector
 int get_vehicle_balance(struct vehicle_t* vehicle) {
     return (vehicle_height(vehicle->right)-vehicle_height(vehicle->left));
 }
@@ -221,8 +278,7 @@ struct vehicle_t* add_vehicle(struct vehicle_t* vehicle, unsigned int autonomy) 
     // Right Left to Right Right
     if(balance < -1) {
         // Left Right case
-        if(autonomy > vehicle->left->autonomy)
-        {
+        if(autonomy > vehicle->left->autonomy) {
             vehicle->left = left_rotate_vehicle(vehicle->left);
         }
         // Now we are in Left Left case
@@ -268,29 +324,32 @@ struct vehicle_t* maximum_vehicle(struct vehicle_t* vehicle) {
 
 }
 
-struct vehicle_t* remove_vehicle(struct vehicle_t* vehicle, unsigned int autonomy) {
+// the flag is 0 if not removed, 1 if removed but still present and 2 if removed completely
+struct vehicle_t* remove_vehicle(struct vehicle_t* vehicle, unsigned int autonomy,char* flag) {
 
     // If the vehicle with given autonomy is not found, do nothing
     if(vehicle == NULL) return NULL;
 
     // If the vehicle with given autonomy has lower autonomy than current,
-    // we recursively call the function on the left child
+    // we recursively call the function on the left child, else the right one
     if(autonomy < vehicle->autonomy) {
-        vehicle->left = remove_vehicle(vehicle->left,autonomy);
+        vehicle->left = remove_vehicle(vehicle->left,autonomy,flag);
     }
     if(autonomy > vehicle->autonomy) {
-        vehicle->right = remove_vehicle(vehicle->right,autonomy);
+        vehicle->right = remove_vehicle(vehicle->right,autonomy,flag);
     }
 
     // If we find the vehicle we decrease its number if >1, else delete it
     if(autonomy == vehicle->autonomy) {
         
         if(vehicle->num>1) {
+            *flag = 1;
             vehicle->num--;
             return vehicle;
         }
         
         // we have to check if the vehicle to remove has 2 or less children
+        *flag = 2;
         struct vehicle_t* tmp;
 
         if(vehicle->left == NULL || vehicle->right == NULL) {
@@ -307,7 +366,9 @@ struct vehicle_t* remove_vehicle(struct vehicle_t* vehicle, unsigned int autonom
             vehicle->num = tmp->num;
             // we have to delete now moved successor, so we set his num to 1
             tmp->num = 1;
-            vehicle->right = remove_vehicle(vehicle->right,tmp->autonomy);
+            char f;
+            f = 0;
+            vehicle->right = remove_vehicle(vehicle->right,tmp->autonomy,&f);
             
     }
 
@@ -363,8 +424,10 @@ struct vehicle_t* find_vehicle(struct vehicle_t* vehicle, unsigned int autonomy)
     // if we reach the end we return NULL
     if(vehicle == NULL) return NULL;
 
+    // if we find the vehicle we return it
     if(autonomy == vehicle->autonomy) return vehicle;
 
+    // we go recursively in the correct direction down the BST
     if(autonomy > vehicle->autonomy) return find_vehicle(vehicle->right,autonomy);
     if(autonomy < vehicle->autonomy) return find_vehicle(vehicle->left,autonomy);
 
@@ -398,11 +461,17 @@ struct station_t* maximum_station(struct station_t* station) {
 
 }
 
+// successor and predecessor are used for next and prev pointers,
+// then used to create the array for BFS
+
 struct station_t* predecessor_station(struct station_t* station) {
 
+    // if the node has a left child, the predecessor is the max
+    // of the left subtree
     if (station->left != NULL)
         return maximum_station(station->left);
     
+    // else we go towards the root and the first left ancestor is the predecessor
     while(station->parent != NULL && station->parent->left == station) {
         station = station->parent;
     }
@@ -413,9 +482,12 @@ struct station_t* predecessor_station(struct station_t* station) {
 
 struct station_t* successor_station(struct station_t* station) {
 
+    // if the node has a right child, the successor is the min
+    // of the right subtree
     if (station->right != NULL)
         return minimum_station(station->right);
     
+    // else we go towards the root and the first right ancestor is the successor
     while(station->parent != NULL && station->parent->right == station) {
         station = station->parent;
     }
@@ -424,7 +496,7 @@ struct station_t* successor_station(struct station_t* station) {
 
 }
 
-struct station_t* station_greater_or_equal_to_distance(struct station_t* station_tree, unsigned int distance) {
+/* struct station_t* station_greater_or_equal_to_distance(struct station_t* station_tree, unsigned int distance) {
     if (station_tree == NULL) return NULL;
 
     struct station_t* tmp,
@@ -445,8 +517,10 @@ struct station_t* station_greater_or_equal_to_distance(struct station_t* station
     }
 
     return res;
-}
+} */
 
+// function used to calculate leftmost and rightmost reachable stations
+// when we update max_vehicle_autonomy
 void update_reachable_stations(struct station_t* station) {
     
     station->rightmost_reachable_station = station->distance + station->max_vehicle_autonomy;
@@ -477,14 +551,15 @@ struct station_t* create_station_node(unsigned int distance) {
     return res;
 }
 
+// helper function to get height of node in tree
 unsigned int station_height(struct station_t* station) {
-    // if one of the children is NULL, return the height of the other + 1
     if(station == NULL) {
         return 0;
     }
     return station->height;
 }
 
+// function to get balance vector
 int get_station_balance(struct station_t* station) {
     return (station_height(station->right)-station_height(station->left));
 }
@@ -535,9 +610,8 @@ struct station_t* add_station(struct station_t* station, unsigned int distance, 
         return *station_ref;
     }
 
-    // if we find the key we have to return NULL: only a station with given distance
-    //if(distance == station->distance) return NULL;
-    // maybe implement logic to check if the station exists here to avoid calling find_station()
+    // if we find the key we have to return the station but leave station_ref to null
+    if(distance == station->distance) return station;
 
     // if the key is different we try to add the station on the correct side
     if(distance < station->distance) {
@@ -589,19 +663,6 @@ struct station_t* remove_station(struct station_t* station, unsigned int distanc
     // If the station with given distance is not found, do nothing
     if(station == NULL) return NULL;
 
-    // If the station with given distance has lower distance than current,
-    // we recursively call the function on the left child
-    if(distance < station->distance) {
-        station->left = remove_station(station->left,distance,flag);
-        if(station->left != NULL)
-            station->left->parent = station;
-    }
-    if(distance > station->distance) {
-        station->right = remove_station(station->right,distance,flag);
-        if(station->right != NULL)
-            station->right->parent = station;
-    }
-
     if(distance == station->distance) {
 
         *flag = 1;
@@ -645,6 +706,19 @@ struct station_t* remove_station(struct station_t* station, unsigned int distanc
         if(station->right != NULL)
             station->right->parent = station;
             
+    }
+
+    // If the station with given distance has lower distance than current,
+    // we recursively call the function on the left child, else ri
+    if(distance < station->distance) {
+        station->left = remove_station(station->left,distance,flag);
+        if(station->left != NULL)
+            station->left->parent = station;
+    }
+    else {
+        station->right = remove_station(station->right,distance,flag);
+        if(station->right != NULL)
+            station->right->parent = station;
     }
 
     //at this point we have removed the node if present. If there was only one node we return NULL
@@ -702,8 +776,10 @@ struct station_t* find_station(struct station_t* station, unsigned int distance)
     // if we reach the end we return NULL
     if(station == NULL) return NULL;
 
+    // if we find the correct station we return it
     if(distance == station->distance) return station;
 
+    // else we recursively call the research on left or right subtree
     if(distance > station->distance) return find_station(station->right,distance);
     if(distance < station->distance) return find_station(station->left,distance);
 
@@ -714,6 +790,7 @@ struct station_t* find_station(struct station_t* station, unsigned int distance)
 void add_vehicle_to_station(struct station_t* station, unsigned int autonomy) {
 
     station->vehicle_parking = add_vehicle(station->vehicle_parking, autonomy);
+    // check if we need to update max vehicle height
     if(autonomy > station->max_vehicle_autonomy) {
         station->max_vehicle_autonomy = autonomy;
         update_reachable_stations(station);
@@ -724,8 +801,11 @@ void add_vehicle_to_station(struct station_t* station, unsigned int autonomy) {
 
 void remove_vehicle_from_station(struct station_t* station, unsigned int autonomy) {
 
-    station->vehicle_parking = remove_vehicle(station->vehicle_parking, autonomy);
-    if(find_vehicle(station->vehicle_parking,autonomy) == NULL) {
+    char flag;
+    flag = 0;
+    station->vehicle_parking = remove_vehicle(station->vehicle_parking, autonomy,&flag);
+    // check if we need to update max vehicle height
+    if(autonomy == station->max_vehicle_autonomy && flag == 2) {
         struct vehicle_t* tmp;
         tmp = maximum_vehicle(station->vehicle_parking);
         if(tmp == NULL) {
@@ -740,17 +820,6 @@ void remove_vehicle_from_station(struct station_t* station, unsigned int autonom
 
     return;
 }
-
-/* //this makes all nodes white again
-void clean_tree(struct station_t* station) {
-    if(station == NULL) return;
-
-    clean_tree(station->left);
-    clean_tree(station->right);
-
-    return;
-}
- */
 
 // We can use the stack to print the correct order of stations
 void print_route(struct station_graph_node_t* vect, unsigned int station,unsigned int end_station) {
@@ -786,6 +855,7 @@ void print_route_reverse(struct station_graph_node_t* vect, unsigned int station
     return;
 }
 
+// function that gives the number of station to allocate an array of perfect size
 unsigned int number_of_stations_between(struct station_t* begin, struct station_t* end) {
 
     unsigned int res = 1;
@@ -803,6 +873,7 @@ unsigned int number_of_stations_between(struct station_t* begin, struct station_
 
 }
 
+// function that creates the array used for BFS
 void vector_of_stations_between(struct station_graph_node_t* vect, struct station_t* begin, struct station_t* end) {
 
     unsigned int idx = 0;
@@ -826,16 +897,20 @@ void vector_of_stations_between(struct station_graph_node_t* vect, struct statio
 
 }
 
+// this is a Breadth-First Search, going forward is optimized, backwards is a normal BFS.
+// this asimmetry is given by the request that if two routes have the same number of stations we have
+// to select the one with the first different station with the lower distance.
+// All edges are calculated at runtime using distance of stations and leftmost and rightmost reachable stations.
 void plan_route(struct station_t* station_tree,struct station_t* begin_station,struct station_t* end_station,struct station_queue_t** queue) {
 
     unsigned int num_stations; // number of stations between begin and end station
 
     unsigned int curr,
-                 tmp;
+                 tmp,
+                 begin,
+                 end;
 
     *queue = create_station_queue(INIT_STATION_QUEUE_DIM);
-
-    // clean_tree(station_tree);
 
     // if the start and end stations are the same print the distance and return
     if(begin_station->distance == end_station->distance) {
@@ -845,14 +920,14 @@ void plan_route(struct station_t* station_tree,struct station_t* begin_station,s
         return;
     }
 
+    // forward case
     if(begin_station->distance < end_station->distance) {
 
         num_stations = number_of_stations_between(begin_station,end_station);
         struct station_graph_node_t station_vector[num_stations];
         vector_of_stations_between(station_vector,begin_station,end_station);
 
-        //vect_begin_station = &station_vector[0];
-        //vect_end_station = &station_vector[num_stations-1];
+        end = num_stations - 1;
 
         station_vector[0].color = GREY;
         *queue = enqueue_station(*queue, 0);
@@ -861,32 +936,27 @@ void plan_route(struct station_t* station_tree,struct station_t* begin_station,s
             curr = dequeue_station(*queue);
             
             while(tmp < num_stations && station_vector[tmp].distance <= station_vector[curr].rightmost_reachable_station) {
-                if(tmp == num_stations - 1) {
+                if(tmp == end) {
                     station_vector[tmp].prev_on_path = curr;
-                    print_route_reverse(station_vector,tmp,num_stations - 1);
+                    print_route_reverse(station_vector,tmp,end);
                     *queue = deallocate_station_queue(*queue);
                     return;
                 }
-                // We do not need to keep track of visited nodes because
-                // of how the graph is structured when going forward
-                //if(tmp->color == WHITE) {
-                    //tmp->color = GREY;
-                    station_vector[tmp].prev_on_path = curr;
-                    *queue = enqueue_station(*queue, tmp);
-                //}
+                station_vector[tmp].prev_on_path = curr;
+                *queue = enqueue_station(*queue, tmp);
+                
                 tmp = tmp + 1;
             }
         }
     }
-
-    if(begin_station->distance > end_station->distance) {
+    // backward case
+    else {
 
         num_stations = number_of_stations_between(end_station,begin_station);
         struct station_graph_node_t station_vector[num_stations];
         vector_of_stations_between(station_vector,end_station,begin_station);
         
-        //vect_begin_station = &station_vector[num_stations-1];
-        //vect_end_station = &station_vector[0];
+        begin = num_stations - 1;
 
         station_vector[0].color = GREY;
         *queue = enqueue_station(*queue, 0);
@@ -899,9 +969,9 @@ void plan_route(struct station_t* station_tree,struct station_t* begin_station,s
                     tmp = tmp + 1;
                     continue;
                 }
-                if(tmp == num_stations - 1) {
+                if(tmp == begin) {
                     station_vector[tmp].prev_on_path = curr;
-                    print_route(station_vector,tmp,num_stations - 1);
+                    print_route(station_vector,tmp,begin);
                     *queue = deallocate_station_queue(*queue);
                     return;
                 }
